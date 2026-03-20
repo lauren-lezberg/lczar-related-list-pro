@@ -1,0 +1,121 @@
+<template>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <lightning-icon icon-name={objectIconName} size="small"></lightning-icon>
+            <span class="header-title">{componentTitle}</span>
+            <span class="header-count">({records.length})</span>
+        </div>
+        <div class="header-actions">
+            <template if:true={isPro}>
+                <div class="search-wrapper">
+                    <lightning-input
+                        type="search"
+                        placeholder="Search..."
+                        value={searchTerm}
+                        onchange={handleSearch}
+                        variant="label-hidden">
+                    </lightning-input>
+                </div>
+            </template>
+            <lightning-button-icon
+                icon-name="utility:refresh"
+                alternative-text="Refresh"
+                variant="border-filled"
+                onclick={loadRecords}
+                class="slds-m-left_x-small">
+            </lightning-button-icon>
+            <lightning-button
+                label="New"
+                variant="neutral"
+                onclick={handleNew}
+                class="slds-m-left_x-small">
+            </lightning-button>
+        </div>
+    </div>
+
+    <!-- Record info line -->
+    <template if:false={isLoading}>
+        <template if:true={hasRecords}>
+            <div class="record-info">
+                <template if:true={searchTerm}>
+                    {displayRecords.length} of {records.length} item{recordCountSuffix}
+                </template>
+                <template if:false={searchTerm}>
+                    {records.length} item{recordCountSuffix}
+                </template>
+                <template if:true={isPro}> &bull; Sorted by {sortField}</template>
+            </div>
+        </template>
+    </template>
+
+    <!-- Loading -->
+    <template if:true={isLoading}>
+        <div class="slds-p-around_medium">
+            <lightning-spinner alternative-text="Loading" size="small"></lightning-spinner>
+        </div>
+    </template>
+
+    <!-- No records -->
+    <template if:true={noRecords}>
+        <p class="slds-text-color_weak slds-text-align_center slds-p-vertical_medium">No records found.</p>
+    </template>
+
+    <!-- Data table -->
+    <template if:false={isLoading}>
+        <c-custom-datatable
+            key-field="Id"
+            data={displayRecords}
+            columns={columns}
+            draft-values={draftValues}
+            onsave={handleSave}
+            onsort={handleSort}
+            oncellchange={handleCellChange}
+            inline-edit
+            hide-checkbox-column>
+        </c-custom-datatable>
+    </template>
+
+    <!-- Pagination (Pro only) -->
+    <template if:true={showPagination}>
+        <div class="slds-grid slds-grid_align-spread slds-p-around_small">
+            <lightning-button
+                label="Previous"
+                icon-name="utility:chevronleft"
+                disabled={hasPrevious}
+                onclick={handlePrevious}>
+            </lightning-button>
+            <p class="slds-text-body_small slds-text-color_weak slds-align-middle">
+                Page {pageNumber} of {totalPages}
+            </p>
+            <lightning-button
+                label="Next"
+                icon-name="utility:chevronright"
+                icon-position="right"
+                disabled={hasNext}
+                onclick={handleNext}>
+            </lightning-button>
+        </div>
+    </template>
+
+    <!-- View All footer -->
+    <div class="footer">
+        <a onclick={handleViewAll} class="slds-text-body_small" style="cursor:pointer;">View All</a>
+    </div>
+
+    <!-- Free tier CTA -->
+    <template if:false={isPro}>
+        <div class="cta-footer">
+            <div class="cta-content">
+                <img src={logoUrl} alt="LCzar Labs" class="brand-logo"/>
+                <div class="cta-divider"></div>
+                <p class="slds-text-body_small cta-message">
+                    Free tier &bull; Up to 10 records &bull; &nbsp;
+                    <a href="https://lczarlabs.gumroad.com" target="_blank" class="upgrade-link">Upgrade to Pro</a>
+                    &nbsp; for unlimited rows, sorting &amp; pagination
+                </p>
+            </div>
+        </div>
+    </template>
+
+</template>
