@@ -6,7 +6,7 @@ import getRelatedRecords from '@salesforce/apex/RelatedListController.getRelated
 import getRelationshipName from '@salesforce/apex/RelatedListController.getRelationshipName';
 import saveRecords from '@salesforce/apex/RelatedListController.saveRecords';
 import getPicklistValues from '@salesforce/apex/RelatedListController.getPicklistValues';
-import getFieldTypes from '@salesforce/apex/RelatedListController.getFieldTypes';
+import getFieldMetadata from '@salesforce/apex/RelatedListController.getFieldMetadata';
 import lczarLogo from '@salesforce/resourceUrl/lczarLabsLogo';
 
 export default class RelatedListPro extends NavigationMixin(LightningElement) {
@@ -34,22 +34,26 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
     @track filteredRecords = [];
     @track picklistValues = {};
     @track fieldTypes = {};
+    @track lookupTargets = {};
+    @track lookupDisplayNames = {};
 
     connectedCallback() {
-        this.loadRecords();
         this.loadRelationshipName();
+        this.loadFieldMetadataFirst();
     }
 
-    loadFieldMetadata() {
+    loadFieldMetadataFirst() {
         if (!this.childObjectApiName || !this.fieldsString) return;
         
-        getFieldTypes({
+        getFieldMetadata({
             objectApiName: this.childObjectApiName,
             fieldsString: this.fieldsString
         })
-        .then(types => {
-            this.fieldTypes = types;
-            const hasPicklists = Object.values(types).some(t => 
+        .then(metadata => {
+            this.fieldTypes = metadata.fieldTypes;
+            this.lookupTargets = metadata.lookupTargets || {};
+            
+            const hasPicklists = Object.values(this.fieldTypes).some(t => 
                 t === 'PICKLIST' || t === 'MULTIPICKLIST'
             );
             if (hasPicklists && this.isPro) {
@@ -61,10 +65,13 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
         })
         .then(values => {
             if (values) this.picklistValues = values;
-            this.columns = this.buildColumns();
+            // Now load records AFTER metadata is ready
+            this.loadRecords();
         })
         .catch(error => {
             console.error('Error loading field metadata:', error);
+            // Load records anyway even if metadata fails
+            this.loadRecords();
         });
     }
 
@@ -95,19 +102,29 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
             sortDirection: this.sortDirection
         })
         .then(result => {
-            this.records = result.records.map(record => ({
-                ...record,
-                recordUrl: '/' + record.Id
-            }));
+            this.records = result.records.map(record => {
+                const mapped = { ...record, recordUrl: '/' + record.Id };
+                // Map lookup name fields
+                Object.keys(this.lookupTargets).forEach(field => {
+                    // Get relationship name by removing 'Id' suffix
+                    const relationshipName = field.endsWith('Id') 
+                        ? field.slice(0, -2) 
+                        : field.replace('__c', '__r');
+                    if (record[relationshipName] && record[relationshipName].Name) {
+                        mapped[field + '_Name'] = record[relationshipName].Name;
+                    }
+                });
+                return mapped;
+            });
             this.isPro = result.isPro;
             this.totalCount = result.totalCount;
             this.columns = this.buildColumns();
             this.isLoading = false;
-            this.loadFieldMetadata();
             this.applyFilter();
         })
         .catch(error => {
-            this.showToast('Error', error.body.message, 'error');
+            const message = error?.body?.message || error?.message || 'An unexpected error occurred';
+            this.showToast('Error', message, 'error');
             this.isLoading = false;
         });
     }
@@ -146,6 +163,8 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
                 lowerField.includes('priority') ||
                 lowerField.includes('rating');
 
+            const isLookup = this.fieldTypes[trimmed] === 'REFERENCE';
+
             if (isPicklist) {
                 if (this.isPro && this.picklistValues[trimmed]) {
                     return {
@@ -159,6 +178,26 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
                             value: { fieldName: trimmed }
                         },
                         editable: this.isPro,
+                        sortable: this.isPro
+                    };
+                }
+                return { label, fieldName: trimmed, type: 'text', editable: false, sortable: false };
+            }
+            // Lookup fields (Pro only)
+            if (isLookup) {
+                if (this.isPro && this.lookupTargets[trimmed]) {
+                    return {
+                        label,
+                        fieldName: trimmed,
+                        type: 'customLookup',
+                        typeAttributes: {
+                            objectApiName: this.lookupTargets[trimmed],
+                            fieldName: trimmed,
+                            value: { fieldName: trimmed },
+                            rowId: { fieldName: 'Id' },
+                            displayValue: { fieldName: trimmed + '_Name' }
+                        },
+                        editable: true,
                         sortable: this.isPro
                     };
                 }
@@ -193,10 +232,13 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
             .then(() => {
                 this.showToast('Success', 'Records updated successfully', 'success');
                 this.draftValues = [];
+                this.lookupDisplayNames = {};
                 this.loadRecords();
             })
             .catch(error => {
-                this.showToast('Error', error.body.message, 'error');
+                const message = error?.body?.message || error?.message || 'An unexpected error occurred';
+                this.showToast('Error', message, 'error');
+                this.isLoading = false;
             });
     }
 
@@ -261,7 +303,18 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
     }
 
     get displayRecords() {
-        return this.searchTerm ? this.filteredRecords : this.records;
+        const base = this.searchTerm ? this.filteredRecords : this.records;
+        if (Object.keys(this.lookupDisplayNames).length === 0) return base;
+        return base.map(record => {
+            const updated = { ...record };
+            Object.keys(this.lookupTargets).forEach(field => {
+                const key = `${record.Id}_${field}`;
+                if (this.lookupDisplayNames[key]) {
+                    updated[field + '_Name'] = this.lookupDisplayNames[key];
+                }
+            });
+            return updated;
+        });
     }
 
     get hasRecords() {
@@ -315,12 +368,30 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
 
     handleCellChange(event) {
         const draftValues = event.detail.draftValues;
-        // Merge draft values into records for display
         this.records = this.records.map(record => {
             const draft = draftValues.find(d => d.Id === record.Id);
-            return draft ? { ...record, ...draft } : record;
+            if (draft) {
+                const updated = { ...record, ...draft };
+                // Update display names for lookup fields
+                Object.keys(this.lookupTargets).forEach(field => {
+                    if (draft[field]) {
+                        const selected = this.searchResults && 
+                            this.searchResults.find(r => r.Id === draft[field]);
+                        if (selected) updated[field + '_Name'] = selected.Name;
+                    }
+                });
+                return updated;
+            }
+            return record;
         });
         this.draftValues = draftValues;
         this.applyFilter();
+    }
+
+    handleLookupSelect(event) {
+        const { fieldName, value, displayName, rowId } = event.detail;
+        // Store display name separately without touching records
+        const key = `${rowId}_${fieldName}`;
+        this.lookupDisplayNames = { ...this.lookupDisplayNames, [key]: displayName };
     }
 }

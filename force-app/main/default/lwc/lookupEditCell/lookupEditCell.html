@@ -1,0 +1,43 @@
+<template>
+    <div class="lookup-container" data-inputable="true">
+        <lightning-input
+            data-inputable="true"
+            label="Search"
+            variant="label-hidden"
+            value={displayValue}
+            placeholder="Search..."
+            onchange={handleInputChange}
+            onfocus={handleFocus}
+            autocomplete="off">
+        </lightning-input>
+        <template if:true={showDropdown}>
+            <div class="dropdown">
+                <template if:true={isSearching}>
+                    <div class="slds-p-around_small">
+                        <lightning-spinner size="x-small" alternative-text="Searching"></lightning-spinner>
+                    </div>
+                </template>
+                <template if:false={isSearching}>
+                    <template if:true={hasResults}>
+                        <ul class="slds-listbox slds-listbox_vertical" role="listbox">
+                            <template for:each={searchResults} for:item="result">
+                                <li key={result.Id} 
+                                    class="slds-media slds-listbox__item"
+                                    data-id={result.Id}
+                                    data-name={result.Name}
+                                    onmousedown={handleSelect}>
+                                    <span class="slds-media__body">
+                                        <span class="slds-listbox__option-text">{result.Name}</span>
+                                    </span>
+                                </li>
+                            </template>
+                        </ul>
+                    </template>
+                    <template if:false={hasResults}>
+                        <div class="slds-p-around_small slds-text-color_weak">No results found</div>
+                    </template>
+                </template>
+            </div>
+        </template>
+    </div>
+</template>

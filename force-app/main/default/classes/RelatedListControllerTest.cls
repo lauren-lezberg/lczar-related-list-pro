@@ -72,30 +72,24 @@ private class RelatedListControllerTest {
     }
 
     @isTest
-    static void testGetRelatedRecords_withProEnabled() {
+    static void testGetRelatedRecords_withSorting() {
         Account acc = [SELECT Id FROM Account LIMIT 1];
-
-        // Insert Pro metadata record
-        RelatedListConfig__mdt proConfig = new RelatedListConfig__mdt(
-            MasterLabel = 'Pro',
-            DeveloperName = 'Pro',
-            IsPro__c = true
-        );
 
         Test.startTest();
         Map<String, Object> result = RelatedListController.getRelatedRecords(
             acc.Id,
             'Opportunity',
             'AccountId',
-            'Name,Amount,CloseDate',
+            'Name,Amount',
             10,
             1,
-            'Name',
-            'ASC'
+            'Amount',
+            'DESC'
         );
         Test.stopTest();
 
-        System.assertNotEquals(null, result);
+        List<SObject> records = (List<SObject>) result.get('records');
+        System.assertEquals(2, records.size());
     }
 
     @isTest
@@ -126,6 +120,19 @@ private class RelatedListControllerTest {
     }
 
     @isTest
+    static void testGetRelationshipName_invalid() {
+        Test.startTest();
+        String relName = RelatedListController.getRelationshipName(
+            'Account',
+            'Opportunity',
+            'InvalidField__c'
+        );
+        Test.stopTest();
+
+        System.assertEquals(null, relName);
+    }
+
+    @isTest
     static void testGetFieldTypes() {
         Test.startTest();
         Map<String, String> fieldTypes = RelatedListController.getFieldTypes(
@@ -144,7 +151,7 @@ private class RelatedListControllerTest {
     @isTest
     static void testGetPicklistValues() {
         Test.startTest();
-        Map<String, List<Map<String, String>>> picklistValues = 
+        Map<String, List<Map<String, String>>> picklistValues =
             RelatedListController.getPicklistValues(
                 'Opportunity',
                 'Name,StageName,Amount'
@@ -157,15 +164,86 @@ private class RelatedListControllerTest {
     }
 
     @isTest
-    static void testGetRelationshipName_invalid() {
+    static void testGetFieldMetadata() {
         Test.startTest();
-        String relName = RelatedListController.getRelationshipName(
-            'Account',
+        Map<String, Object> metadata = RelatedListController.getFieldMetadata(
             'Opportunity',
-            'InvalidField__c'
+            'Name,StageName,Amount,CloseDate,AccountId'
         );
         Test.stopTest();
 
-        System.assertEquals(null, relName);
+        System.assertNotEquals(null, metadata);
+        System.assert(metadata.containsKey('fieldTypes'));
+        System.assert(metadata.containsKey('lookupTargets'));
+
+        Map<String, String> fieldTypes = (Map<String, String>) metadata.get('fieldTypes');
+        System.assertEquals('STRING', fieldTypes.get('Name'));
+        System.assertEquals('PICKLIST', fieldTypes.get('StageName'));
+        System.assertEquals('REFERENCE', fieldTypes.get('AccountId'));
+
+        Map<String, String> lookupTargets = (Map<String, String>) metadata.get('lookupTargets');
+        System.assert(lookupTargets.containsKey('AccountId'));
+        System.assertEquals('Account', lookupTargets.get('AccountId'));
+    }
+
+    @isTest
+    static void testGetFieldMetadata_invalidObject() {
+        Test.startTest();
+        Map<String, Object> metadata = RelatedListController.getFieldMetadata(
+            'InvalidObject__c',
+            'Name'
+        );
+        Test.stopTest();
+
+        System.assertNotEquals(null, metadata);
+        System.assert(metadata.isEmpty());
+    }
+
+    @isTest
+    static void testSearchRecords_basic() {
+        Test.startTest();
+        List<SObject> results = RelatedListController.searchRecords(
+            'Account',
+            'Test'
+        );
+        Test.stopTest();
+
+        System.assertNotEquals(null, results);
+        System.assert(results.size() > 0);
+    }
+
+    @isTest
+    static void testSearchRecords_noResults() {
+        Test.startTest();
+        List<SObject> results = RelatedListController.searchRecords(
+            'Account',
+            'XYZ_NONEXISTENT_RECORD_12345'
+        );
+        Test.stopTest();
+
+        System.assertNotEquals(null, results);
+        System.assertEquals(0, results.size());
+    }
+
+    @isTest
+    static void testGetRelatedRecords_withLookupFields() {
+        Account acc = [SELECT Id FROM Account LIMIT 1];
+
+        Test.startTest();
+        Map<String, Object> result = RelatedListController.getRelatedRecords(
+            acc.Id,
+            'Opportunity',
+            'AccountId',
+            'Name,AccountId',
+            10,
+            1,
+            'Name',
+            'ASC'
+        );
+        Test.stopTest();
+
+        System.assertNotEquals(null, result);
+        List<SObject> records = (List<SObject>) result.get('records');
+        System.assertEquals(2, records.size());
     }
 }
