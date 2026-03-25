@@ -1,4 +1,6 @@
-public without sharing class RelatedListController {
+public with sharing class RelatedListController {
+
+    @TestVisible static Boolean isProOverride;
 
     @AuraEnabled(cacheable=false)
     public static Map<String, Object> getRelatedRecords(
@@ -11,28 +13,32 @@ public without sharing class RelatedListController {
         String sortField,
         String sortDirection
     ) {
-        Boolean isPro = RelatedListConfig__mdt.getInstance('Pro') != null;
+        Boolean isPro = isProOverride != null 
+            ? isProOverride 
+            : RelatedListConfig__mdt.getInstance('Pro') != null;
 
         // Free tier row limit
         Integer rowLimit = isPro ? (pageSize != null ? pageSize : 50) : 10;
         Integer offset = isPro && pageNumber != null ? (pageNumber - 1) * rowLimit : 0;
 
-        // Build field list including lookup name fields
-        List<String> fields = fieldsString.split(',');
+        // Get SObjectType and check object-level read access
+        Schema.SObjectType childType = Schema.getGlobalDescribe().get(objectApiName);
+        if (childType == null || !childType.getDescribe().isAccessible()) {
+            return null;
+        }
+
+        // Build list of fields that the user can read
+        Map<String, Schema.SObjectField> fieldMap = childType.getDescribe().fields.getMap();
         List<String> queryFields = new List<String>{ 'Id' };
 
-        Schema.SObjectType childType = Schema.getGlobalDescribe().get(objectApiName);
-        Map<String, Schema.SObjectField> fieldMap = childType != null ?
-            childType.getDescribe().fields.getMap() :
-            new Map<String, Schema.SObjectField>();
-
-        for (String field : fields) {
+        for (String field : fieldsString.split(',')) {
             String trimmed = field.trim();
-            queryFields.add(trimmed);
-
-            // For lookup fields, also query the Name field via relationship
             Schema.SObjectField sField = fieldMap.get(trimmed);
-            if (sField != null) {
+
+            if (sField != null && sField.getDescribe().isAccessible()) {
+                queryFields.add(trimmed);
+
+                // For lookup fields, include the Name if accessible
                 Schema.DescribeFieldResult fieldDescribe = sField.getDescribe();
                 if (fieldDescribe.getType() == Schema.DisplayType.REFERENCE) {
                     String relationshipName = fieldDescribe.getRelationshipName();
@@ -45,13 +51,17 @@ public without sharing class RelatedListController {
 
         String fieldList = String.join(queryFields, ', ');
 
-        // Build query
+        // Build dynamic query
         String query = 'SELECT ' + fieldList +
             ' FROM ' + objectApiName +
             ' WHERE ' + parentFieldApiName + ' = :recordId';
 
         if (isPro && sortField != null && sortDirection != null) {
-            query += ' ORDER BY ' + sortField + ' ' + sortDirection;
+            if (fieldMap.containsKey(sortField) && 
+                fieldMap.get(sortField).getDescribe().isAccessible() &&
+                (sortDirection == 'ASC' || sortDirection == 'DESC')) {
+                query += ' ORDER BY ' + sortField + ' ' + sortDirection;
+            }
         }
 
         query += ' LIMIT ' + rowLimit;
@@ -60,9 +70,10 @@ public without sharing class RelatedListController {
             query += ' OFFSET ' + offset;
         }
 
+        // Execute query
         List<SObject> records = Database.query(query);
 
-        // Get total count for pagination
+        // Total count only in Pro mode
         Integer totalCount = 0;
         if (isPro) {
             String countQuery = 'SELECT COUNT() FROM ' + objectApiName +
@@ -80,6 +91,14 @@ public without sharing class RelatedListController {
 
     @AuraEnabled
     public static void saveRecords(List<SObject> records) {
+        if (records == null || records.isEmpty()) return;
+    
+        // Verify user has edit access to the object
+        String objectName = records[0].getSObjectType().getDescribe().getName();
+        if (!Schema.getGlobalDescribe().get(objectName).getDescribe().isUpdateable()) {
+            throw new AuraHandledException('You do not have permission to edit these records.');
+        }
+        
         update records;
     }
 
@@ -164,8 +183,7 @@ public without sharing class RelatedListController {
         String fieldsString
     ) {
         Map<String, Object> result = new Map<String, Object>();
-        Map<String, String> fieldTypes = new Map<String, String>();
-        Map<String, String> lookupTargets = new Map<String, String>();
+        Map<String, Object> fields = new Map<String, Object>();
 
         Schema.SObjectType objectType = Schema.getGlobalDescribe().get(objectApiName);
         if (objectType == null) return result;
@@ -178,19 +196,46 @@ public without sharing class RelatedListController {
             if (sObjectField == null) continue;
 
             Schema.DescribeFieldResult fieldDescribe = sObjectField.getDescribe();
-            Schema.DisplayType fieldType = fieldDescribe.getType();
-            fieldTypes.put(trimmedField, String.valueOf(fieldType));
+            if (!fieldDescribe.isAccessible()) continue;
 
-            if (fieldType == Schema.DisplayType.REFERENCE) {
+            Map<String, Object> fieldInfo = new Map<String, Object>{
+                'type' => String.valueOf(fieldDescribe.getType()),
+                'accessible' => true,
+                'editable' => fieldDescribe.isUpdateable(),
+                'label' => fieldDescribe.getLabel()
+            };
+
+            // Picklist values
+            if (fieldDescribe.getType() == Schema.DisplayType.PICKLIST ||
+                fieldDescribe.getType() == Schema.DisplayType.MULTIPICKLIST) {
+                List<Map<String, String>> picklistValues = new List<Map<String, String>>();
+                for (Schema.PicklistEntry entry : fieldDescribe.getPicklistValues()) {
+                    if (entry.isActive()) {
+                        picklistValues.add(new Map<String, String>{
+                            'label' => entry.getLabel(),
+                            'value' => entry.getValue()
+                        });
+                    }
+                }
+                fieldInfo.put('picklistValues', picklistValues);
+            }
+
+            // Lookup target
+            if (fieldDescribe.getType() == Schema.DisplayType.REFERENCE) {
                 List<Schema.SObjectType> refs = fieldDescribe.getReferenceTo();
                 if (!refs.isEmpty()) {
-                    lookupTargets.put(trimmedField, refs[0].getDescribe().getName());
+                    fieldInfo.put('lookupTarget', refs[0].getDescribe().getName());
                 }
             }
+
+            fields.put(trimmedField, fieldInfo);
         }
 
-        result.put('fieldTypes', fieldTypes);
-        result.put('lookupTargets', lookupTargets);
+        result.put('fields', fields);
+
+        Boolean isObjectCreatable = objectType.getDescribe().isCreateable();
+        result.put('isObjectCreatable', isObjectCreatable);
+
         return result;
     }
 

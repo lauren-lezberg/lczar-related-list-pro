@@ -5,7 +5,6 @@ import { encodeDefaultFieldValues } from 'lightning/pageReferenceUtils';
 import getRelatedRecords from '@salesforce/apex/RelatedListController.getRelatedRecords';
 import getRelationshipName from '@salesforce/apex/RelatedListController.getRelationshipName';
 import saveRecords from '@salesforce/apex/RelatedListController.saveRecords';
-import getPicklistValues from '@salesforce/apex/RelatedListController.getPicklistValues';
 import getFieldMetadata from '@salesforce/apex/RelatedListController.getFieldMetadata';
 import lczarLogo from '@salesforce/resourceUrl/lczarLabsLogo';
 
@@ -32,10 +31,11 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
     @track logoUrl = lczarLogo;
     @track searchTerm = '';
     @track filteredRecords = [];
-    @track picklistValues = {};
-    @track fieldTypes = {};
-    @track lookupTargets = {};
     @track lookupDisplayNames = {};
+    @track fieldMetadata = {};
+    @track isObjectCreatable = true;
+    @track hideComponent = false;
+    @track showNewButton = false;
 
     connectedCallback() {
         this.loadRelationshipName();
@@ -44,34 +44,26 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
 
     loadFieldMetadataFirst() {
         if (!this.childObjectApiName || !this.fieldsString) return;
-        
+
         getFieldMetadata({
             objectApiName: this.childObjectApiName,
             fieldsString: this.fieldsString
         })
-        .then(metadata => {
-            this.fieldTypes = metadata.fieldTypes;
-            this.lookupTargets = metadata.lookupTargets || {};
-            
-            const hasPicklists = Object.values(this.fieldTypes).some(t => 
-                t === 'PICKLIST' || t === 'MULTIPICKLIST'
-            );
-            if (hasPicklists && this.isPro) {
-                return getPicklistValues({
-                    objectApiName: this.childObjectApiName,
-                    fieldsString: this.fieldsString
-                });
-            }
-        })
-        .then(values => {
-            if (values) this.picklistValues = values;
-            // Now load records AFTER metadata is ready
+        .then(result => {
+            this.fieldMetadata = result.fields || {};
+            this.hideComponent
+            this.isObjectCreatable = result.isObjectCreatable !== false;
             this.loadRecords();
         })
         .catch(error => {
-            console.error('Error loading field metadata:', error);
-            // Load records anyway even if metadata fails
-            this.loadRecords();
+            const message = error?.body?.message || error?.message || '';
+            if (message.includes('not have access to the Apex class')) {
+                this.hideComponent = true;
+                this.isLoading = false;
+            } else {
+                console.error('Error loading field metadata:', error);
+                this.loadRecords();
+            }
         });
     }
 
@@ -102,16 +94,22 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
             sortDirection: this.sortDirection
         })
         .then(result => {
+            if (result === null) {
+                this.hideComponent = true;
+                this.isLoading = false;
+                return;
+            }
             this.records = result.records.map(record => {
                 const mapped = { ...record, recordUrl: '/' + record.Id };
-                // Map lookup name fields
-                Object.keys(this.lookupTargets).forEach(field => {
-                    // Get relationship name by removing 'Id' suffix
-                    const relationshipName = field.endsWith('Id') 
-                        ? field.slice(0, -2) 
-                        : field.replace('__c', '__r');
-                    if (record[relationshipName] && record[relationshipName].Name) {
-                        mapped[field + '_Name'] = record[relationshipName].Name;
+                Object.keys(this.fieldMetadata).forEach(field => {
+                    const meta = this.fieldMetadata[field];
+                    if (meta && meta.type === 'REFERENCE') {
+                        const relationshipName = field.endsWith('Id') 
+                            ? field.slice(0, -2) 
+                            : field.replace('__c', '__r');
+                        if (record[relationshipName] && record[relationshipName].Name) {
+                            mapped[field + '_Name'] = record[relationshipName].Name;
+                        }
                     }
                 });
                 return mapped;
@@ -129,19 +127,30 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
         });
     }
 
+    cleanLabel(label, fieldType, trimmed) {
+        if (fieldType === 'REFERENCE') {
+            // Remove " ID" suffix from standard lookups e.g. "Account ID" -> "Account"
+            if (label.endsWith(' ID')) {
+                return label.slice(0, -3);
+            }
+            // Remove "Id" suffix from custom lookups e.g. "My Object Id" -> "My Object"
+            if (label.endsWith(' Id')) {
+                return label.slice(0, -3);
+            }
+        }
+        return label;
+    }
+
     buildColumns() {
         if (!this.fieldsString) return [];
         return this.fieldsString.split(',').map((field, index) => {
             const trimmed = field.trim();
-            const label = trimmed
-                .replace('__c', '')
-                .replace(/([A-Z])/g, ' $1')
-                .replace(/_/g, ' ')
-                .trim();
+            const meta = this.fieldMetadata[trimmed];
 
+            // First field is always the name/link column
             if (index === 0) {
                 return {
-                    label,
+                    label: meta ? meta.label : trimmed,
                     fieldName: 'recordUrl',
                     type: 'url',
                     typeAttributes: {
@@ -153,77 +162,94 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
                 };
             }
 
-            const lowerField = trimmed.toLowerCase();
+            // Skip inaccessible fields
+            if (!meta) return null;
 
-            const isPicklist = lowerField.includes('stage') ||
-                lowerField.includes('status') ||
-                lowerField.includes('type') ||
-                lowerField.includes('reason') ||
-                lowerField.includes('source') ||
-                lowerField.includes('priority') ||
-                lowerField.includes('rating');
+            const label = meta.label;
+            const editable = meta.editable;
+            const fieldType = meta.type;
 
-            const isLookup = this.fieldTypes[trimmed] === 'REFERENCE';
-
-            if (isPicklist) {
-                if (this.isPro && this.picklistValues[trimmed]) {
+            // Picklist
+            if (fieldType === 'PICKLIST' || fieldType === 'MULTIPICKLIST') {
+                if (this.isPro && meta.picklistValues) {
                     return {
                         label,
                         fieldName: trimmed,
                         type: 'customPicklist',
                         typeAttributes: {
-                            options: this.picklistValues[trimmed],
+                            options: meta.picklistValues,
+                            value: { fieldName: trimmed },
                             rowId: { fieldName: 'Id' },
-                            fieldName: trimmed,
-                            value: { fieldName: trimmed }
+                            fieldName: trimmed
                         },
-                        editable: this.isPro,
+                        editable: editable && this.isPro,
                         sortable: this.isPro
                     };
                 }
                 return { label, fieldName: trimmed, type: 'text', editable: false, sortable: false };
             }
-            // Lookup fields (Pro only)
-            if (isLookup) {
-                if (this.isPro && this.lookupTargets[trimmed]) {
+
+            // Lookup
+            if (fieldType === 'REFERENCE' && meta.lookupTarget) {
+                const cleanedLabel = this.cleanLabel(label, fieldType, trimmed);
+                if (this.isPro) {
                     return {
-                        label,
+                        label: cleanedLabel,
                         fieldName: trimmed,
                         type: 'customLookup',
                         typeAttributes: {
-                            objectApiName: this.lookupTargets[trimmed],
+                            objectApiName: meta.lookupTarget,
                             fieldName: trimmed,
                             value: { fieldName: trimmed },
                             rowId: { fieldName: 'Id' },
                             displayValue: { fieldName: trimmed + '_Name' }
                         },
-                        editable: true,
+                        editable: editable && this.isPro,
                         sortable: this.isPro
                     };
                 }
-                return { label, fieldName: trimmed, type: 'text', editable: false, sortable: false };
-            }
-            if (lowerField.includes('amount') || lowerField.includes('price') || lowerField.includes('revenue') || lowerField.includes('cost')) {
-                return { label, fieldName: trimmed, type: 'currency', typeAttributes: { currencyCode: 'USD' }, sortable: this.isPro, editable: true };
-            }
-            if (lowerField.includes('date') && !lowerField.includes('datetime')) {
-                return { label, fieldName: trimmed, type: 'date', typeAttributes: { year: 'numeric', month: 'numeric', day: 'numeric' }, sortable: this.isPro, editable: true };
-            }
-            if (lowerField.includes('datetime') || lowerField.includes('timestamp')) {
-                return { label, fieldName: trimmed, type: 'date', typeAttributes: { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }, sortable: this.isPro, editable: true };
-            }
-            if (lowerField.includes('phone')) {
-                return { label, fieldName: trimmed, type: 'phone', sortable: this.isPro, editable: true };
-            }
-            if (lowerField.includes('email')) {
-                return { label, fieldName: trimmed, type: 'email', sortable: this.isPro, editable: true };
-            }
-            if (lowerField.includes('percent') || lowerField.includes('rate')) {
-                return { label, fieldName: trimmed, type: 'percent', sortable: this.isPro, editable: true };
+                return { label: cleanedLabel, fieldName: trimmed + '_Name', type: 'text', editable: false, sortable: false };
             }
 
-            return { label, fieldName: trimmed, type: 'text', editable: true, sortable: this.isPro };
-        });
+            // Currency
+            if (fieldType === 'CURRENCY') {
+                return { label, fieldName: trimmed, type: 'currency', typeAttributes: { currencyCode: 'USD' }, sortable: this.isPro, editable };
+            }
+
+            // Date
+            if (fieldType === 'DATE') {
+                return { label, fieldName: trimmed, type: 'date', typeAttributes: { year: 'numeric', month: 'numeric', day: 'numeric' }, sortable: this.isPro, editable };
+            }
+
+            // DateTime
+            if (fieldType === 'DATETIME') {
+                return { label, fieldName: trimmed, type: 'date', typeAttributes: { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }, sortable: this.isPro, editable };
+            }
+
+            // Phone
+            if (fieldType === 'PHONE') {
+                return { label, fieldName: trimmed, type: 'phone', sortable: this.isPro, editable };
+            }
+
+            // Email
+            if (fieldType === 'EMAIL') {
+                return { label, fieldName: trimmed, type: 'email', sortable: this.isPro, editable };
+            }
+
+            // Percent
+            if (fieldType === 'PERCENT') {
+                return { label, fieldName: trimmed, type: 'percent', sortable: this.isPro, editable };
+            }
+
+            // Boolean
+            if (fieldType === 'BOOLEAN') {
+                return { label, fieldName: trimmed, type: 'boolean', sortable: this.isPro, editable };
+            }
+
+            // Default text
+            return { label, fieldName: trimmed, type: 'text', editable, sortable: this.isPro };
+
+        }).filter(col => col !== null);
     }
 
     handleSave(event) {
@@ -307,10 +333,13 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
         if (Object.keys(this.lookupDisplayNames).length === 0) return base;
         return base.map(record => {
             const updated = { ...record };
-            Object.keys(this.lookupTargets).forEach(field => {
-                const key = `${record.Id}_${field}`;
-                if (this.lookupDisplayNames[key]) {
-                    updated[field + '_Name'] = this.lookupDisplayNames[key];
+            Object.keys(this.fieldMetadata).forEach(field => {
+                const meta = this.fieldMetadata[field];
+                if (meta && meta.type === 'REFERENCE') {
+                    const key = `${record.Id}_${field}`;
+                    if (this.lookupDisplayNames[key]) {
+                        updated[field + '_Name'] = this.lookupDisplayNames[key];
+                    }
                 }
             });
             return updated;
@@ -370,19 +399,7 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
         const draftValues = event.detail.draftValues;
         this.records = this.records.map(record => {
             const draft = draftValues.find(d => d.Id === record.Id);
-            if (draft) {
-                const updated = { ...record, ...draft };
-                // Update display names for lookup fields
-                Object.keys(this.lookupTargets).forEach(field => {
-                    if (draft[field]) {
-                        const selected = this.searchResults && 
-                            this.searchResults.find(r => r.Id === draft[field]);
-                        if (selected) updated[field + '_Name'] = selected.Name;
-                    }
-                });
-                return updated;
-            }
-            return record;
+            return draft ? { ...record, ...draft } : record;
         });
         this.draftValues = draftValues;
         this.applyFilter();
@@ -390,8 +407,8 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
 
     handleLookupSelect(event) {
         const { fieldName, value, displayName, rowId } = event.detail;
-        // Store display name separately without touching records
         const key = `${rowId}_${fieldName}`;
         this.lookupDisplayNames = { ...this.lookupDisplayNames, [key]: displayName };
     }
+
 }
