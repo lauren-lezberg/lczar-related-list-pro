@@ -109,7 +109,6 @@ private class RelatedListControllerTest {
         System.assertEquals(10, records1.size());
         System.assertEquals(10, records2.size());
         System.assertNotEquals(records1[0].Id, records2[0].Id, 'Pages should differ');
-
         System.assertEquals(25, page1.get('totalCount'));
     }
 
@@ -162,8 +161,8 @@ private class RelatedListControllerTest {
         SObject first = records[0];
         SObject parent = first.getSObject('Account');
 
-        System.assertNotEquals(null, parent);
-        System.assertNotEquals(null, parent.get('Name'));
+        System.assertNotEquals(null, parent, 'Parent relationship should be populated');
+        System.assertNotEquals(null, parent.get('Name'), 'Parent Name should be populated');
     }
 
     // ----------------------------
@@ -189,6 +188,42 @@ private class RelatedListControllerTest {
         }
     }
 
+    @isTest
+    static void testSaveRecords_emptyList() {
+        // Should return without error
+        Test.startTest();
+        RelatedListController.saveRecords(new List<SObject>());
+        Test.stopTest();
+        System.assert(true, 'Empty list should not throw');
+    }
+
+    // ----------------------------
+    // DELETE
+    // ----------------------------
+
+    @isTest
+    static void testDeleteRecord_success() {
+        Opportunity opp = [SELECT Id FROM Opportunity LIMIT 1];
+        Id oppId = opp.Id;
+
+        Test.startTest();
+        RelatedListController.deleteRecord(oppId);
+        Test.stopTest();
+
+        List<Opportunity> remaining = [SELECT Id FROM Opportunity WHERE Id = :oppId];
+        System.assertEquals(0, remaining.size(), 'Record should have been deleted');
+    }
+
+    @isTest
+    static void testDeleteRecord_nullId() {
+        try {
+            RelatedListController.deleteRecord(null);
+            System.assert(false, 'Should have thrown an AuraHandledException');
+        } catch (AuraHandledException e) {
+            System.assert(e.getMessage() != null, 'Exception message should not be null');
+        }
+    }
+
     // ----------------------------
     // SEARCH SAFETY
     // ----------------------------
@@ -200,7 +235,68 @@ private class RelatedListControllerTest {
             '%\' OR Name LIKE \'%'
         );
 
-        System.assertNotEquals(null, results);
+        System.assertNotEquals(null, results, 'Results should not be null');
+        System.assertEquals(0, results.size(), 'Injection attempt should return no results');
+    }
+
+    @isTest
+    static void testSearchRecords_invalidObject() {
+        try {
+            RelatedListController.searchRecords('FakeObject__c', 'test');
+            System.assert(false, 'Should have thrown an AuraHandledException');
+        } catch (AuraHandledException e) {
+            System.assert(e.getMessage() != null, 'Exception message should not be null');
+        }
+    }
+
+    // ----------------------------
+    // INVALID PARENT FIELD
+    // ----------------------------
+
+    @isTest
+    static void testGetRelatedRecords_invalidParentField() {
+        Account acc = [SELECT Id FROM Account LIMIT 1];
+
+        try {
+            RelatedListController.getRelatedRecords(
+                acc.Id,
+                'Opportunity',
+                'FakeFieldId__c',
+                'Name',
+                10,
+                1,
+                null,
+                null
+            );
+            System.assert(false, 'Should have thrown an AuraHandledException');
+        } catch (AuraHandledException e) {
+            System.assert(e.getMessage() != null, 'Exception message should not be null');
+        }
+    }
+
+    // ----------------------------
+    // PAGE SIZE CAP
+    // ----------------------------
+
+    @isTest
+    static void testProMode_pageSizeCapped() {
+        RelatedListController.isProOverride = true;
+
+        Account acc = [SELECT Id FROM Account LIMIT 1];
+
+        Map<String, Object> result = RelatedListController.getRelatedRecords(
+            acc.Id,
+            'Opportunity',
+            'AccountId',
+            'Name',
+            99999, // should be capped to MAX_PAGE_SIZE
+            1,
+            null,
+            null
+        );
+
+        Integer rowLimit = (Integer) result.get('rowLimit');
+        System.assert(rowLimit <= 200, 'Row limit should be capped at MAX_PAGE_SIZE');
     }
 
     // ----------------------------
@@ -211,20 +307,67 @@ private class RelatedListControllerTest {
     static void testGetRelatedRecords_invalidObject() {
         Account acc = [SELECT Id FROM Account LIMIT 1];
 
-        try {
-            RelatedListController.getRelatedRecords(
-                acc.Id,
-                'FakeObject__c',
-                'AccountId',
-                'Name',
-                10,
-                1,
-                null,
-                null
-            );
-            System.assert(false, 'Should have failed');
-        } catch (Exception e) {
-            System.assert(true);
-        }
+        Map<String, Object> result = RelatedListController.getRelatedRecords(
+            acc.Id,
+            'FakeObject__c',
+            'AccountId',
+            'Name',
+            10,
+            1,
+            null,
+            null
+        );
+
+        System.assertEquals(null, result, 'Invalid object should return null');
+    }
+
+    // ----------------------------
+    // FIELD METADATA
+    // ----------------------------
+
+    @isTest
+    static void testGetFieldMetadata_returnsExpectedFields() {
+        Map<String, Object> result = RelatedListController.getFieldMetadata(
+            'Opportunity',
+            'Name,Amount,StageName'
+        );
+
+        System.assertNotEquals(null, result, 'Result should not be null');
+
+        Map<String, Object> fields = (Map<String, Object>) result.get('fields');
+        System.assertNotEquals(null, fields, 'Fields map should not be null');
+        System.assert(fields.containsKey('Name'), 'Should contain Name field');
+        System.assert(fields.containsKey('Amount'), 'Should contain Amount field');
+        System.assert(fields.containsKey('StageName'), 'Should contain StageName field');
+
+        System.assert(result.containsKey('isObjectCreatable'), 'Should include isObjectCreatable');
+        System.assert(result.containsKey('isObjectDeletable'), 'Should include isObjectDeletable');
+    }
+
+    // ----------------------------
+    // RELATIONSHIP NAME
+    // ----------------------------
+
+    @isTest
+    static void testGetRelationshipName_found() {
+        String relName = RelatedListController.getRelationshipName(
+            'Account',
+            'Opportunity',
+            'AccountId'
+        );
+
+        System.assertNotEquals(null, relName, 'Should find the Opportunities relationship');
+        System.assertEquals('Opportunities', relName);
+    }
+
+    @isTest
+    static void testGetRelationshipName_notFound() {
+        String relName = RelatedListController.getRelationshipName(
+            'Account',
+            'Opportunity',
+            'FakeFieldId'
+        );
+
+        System.assertEquals(null, relName, 'Should return null for unknown relationship');
     }
 }

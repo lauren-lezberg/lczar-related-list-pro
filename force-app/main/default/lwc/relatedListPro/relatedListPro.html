@@ -1,11 +1,30 @@
 <template>
+    <!-- Config error: shown to admins when object/field properties are invalid -->
+    <template if:true={configError}>
+        <div class="slds-card_boundary">
+            <lightning-card title={componentTitle} icon-name="utility:error">
+                <div class="slds-p-around_medium">
+                    <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                        <lightning-icon
+                            icon-name="utility:error"
+                            alternative-text="Error"
+                            size="x-small"
+                            class="slds-m-right_x-small">
+                        </lightning-icon>
+                        <h2>{configError}</h2>
+                    </div>
+                </div>
+            </lightning-card>
+        </div>
+    </template>
+
+    <template if:false={configError}>
     <template if:false={hideComponent}>
         <div class="slds-card_boundary">
             <lightning-card title={componentTitle} icon-name={objectIconName}>
                 <div slot="actions">
                     <div class="slds-grid slds-grid_align-spread slds-p-around_small">
-                    <template if:true={hasRecords}>
-                        
+                        <template if:true={hasAnyRecords}>
                             <div class="search-wrapper slds-m-right_x-small">
                                 <lightning-input
                                     type="search"
@@ -13,23 +32,23 @@
                                     value={searchTerm}
                                     onchange={handleSearch}
                                     variant="label-hidden">
-                                </lightning-input> 
+                                </lightning-input>
                             </div>
-                        <lightning-button-icon
-                            icon-name="utility:refresh"
-                            alternative-text="Refresh"
-                            variant="border-filled"
-                            onclick={loadRecords}
-                            class="slds-m-right_x-small">
-                        </lightning-button-icon>
-                    </template>
-                    <template if:true={isObjectCreatable}>
-                        <lightning-button
-                            label="New"
-                            variant="neutral"
-                            onclick={handleNew}>
-                        </lightning-button>
-                    </template>
+                            <lightning-button-icon
+                                icon-name="utility:refresh"
+                                alternative-text="Refresh"
+                                variant="border-filled"
+                                onclick={loadRecords}
+                                class="slds-m-right_x-small">
+                            </lightning-button-icon>
+                        </template>
+                        <template if:true={isObjectCreatable}>
+                            <lightning-button
+                                label="New"
+                                variant="neutral"
+                                onclick={handleNew}>
+                            </lightning-button>
+                        </template>
                     </div>
                 </div>
 
@@ -41,7 +60,14 @@
                 </template>
 
                 <template if:false={isLoading}>
-                    <template if:true={hasRecords}>
+
+                    <template if:true={noSearchResults}>
+                        <div class="slds-p-around_medium slds-text-align_center">
+                            <p class="slds-text-color_weak">No results for &ldquo;{searchTerm}&rdquo;.</p>
+                        </div>
+                    </template>
+
+                    <template if:true={hasDisplayRecords}>
                         <!-- Record info line -->
                         <div class="slds-text-body_small slds-text-color_weak slds-p-horizontal_medium slds-p-bottom_x-small">
                             <template if:true={searchTerm}>
@@ -52,8 +78,6 @@
                             </template>
                             <template if:true={isPro}> &bull; Sorted by {sortField}</template>
                         </div>
-
-                        <!-- Data table -->
                         <div class="table-container">
                             <c-custom-datatable
                                 key-field="Id"
@@ -64,6 +88,7 @@
                                 onsort={handleSort}
                                 oncellchange={handleCellChange}
                                 onlookupselect={handleLookupSelect}
+                                onrowaction={handleRowAction}
                                 inline-edit
                                 hide-checkbox-column>
                             </c-custom-datatable>
@@ -75,7 +100,7 @@
                                 <lightning-button
                                     label="Previous"
                                     icon-name="utility:chevronleft"
-                                    disabled={hasPrevious}
+                                    disabled={isPreviousDisabled}
                                     onclick={handlePrevious}>
                                 </lightning-button>
                                 <span class="slds-text-body_small slds-text-color_weak slds-align-middle">
@@ -85,7 +110,7 @@
                                     label="Next"
                                     icon-name="utility:chevronright"
                                     icon-position="right"
-                                    disabled={hasNext}
+                                    disabled={isNextDisabled}
                                     onclick={handleNext}>
                                 </lightning-button>
                             </div>
@@ -94,7 +119,7 @@
                 </template>
 
                 <!-- View All footer -->
-                <template if:true={hasRecords}>
+                <template if:true={hasAnyRecords}>
                     <div slot="footer">
                         <a onclick={handleViewAll} style="cursor:pointer;">View All</a>
                     </div>
@@ -102,7 +127,7 @@
 
                 <!-- Free tier CTA -->
                 <template if:false={isPro}>
-                    <template if:true={hasRecords}>
+                    <template if:true={hasAnyRecords}>
                         <div class="cta-footer">
                             <div class="cta-content">
                                 <img src={logoUrl} alt="LCzar Labs" class="brand-logo"/>
@@ -118,5 +143,35 @@
                 </template>
             </lightning-card>
         </div>
-    </template> 
-</template>
+
+        <!-- Delete confirmation modal -->
+        <template if:true={showDeleteModal}>
+            <section role="dialog" tabindex="-1" class="slds-modal slds-fade-in-open">
+                <div class="slds-modal__container">
+                    <header class="slds-modal__header">
+                        <h2 class="slds-text-heading_medium">Confirm Delete</h2>
+                    </header>
+                    <div class="slds-modal__content slds-p-around_medium">
+                        <p>Are you sure you want to delete this record? This action cannot be undone.</p>
+                    </div>
+                    <footer class="slds-modal__footer">
+                        <lightning-button
+                            label="Cancel"
+                            variant="neutral"
+                            onclick={handleDeleteCancel}>
+                        </lightning-button>
+                        <lightning-button
+                            label="Delete"
+                            variant="destructive"
+                            onclick={handleDeleteConfirm}
+                            class="slds-m-left_x-small">
+                        </lightning-button>
+                    </footer>
+                </div>
+            </section>
+            <div class="slds-backdrop slds-backdrop_open"></div>
+        </template>
+
+    </template>
+    </template> <!-- if:false={hideComponent} -->
+    </template> <!-- if:false={configError} -->

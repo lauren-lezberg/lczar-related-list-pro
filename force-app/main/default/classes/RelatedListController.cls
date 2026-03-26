@@ -2,6 +2,9 @@ public with sharing class RelatedListController {
 
     @TestVisible static Boolean isProOverride;
 
+    // Maximum rows returnable in Pro mode regardless of configured page size
+    private static final Integer MAX_PAGE_SIZE = 200;
+
     @AuraEnabled(cacheable=false)
     public static Map<String, Object> getRelatedRecords(
         Id recordId,
@@ -17,8 +20,13 @@ public with sharing class RelatedListController {
             ? isProOverride 
             : RelatedListConfig__mdt.getInstance('Pro') != null;
 
+        // Cap page size to prevent runaway queries
+        Integer safePageSize = (pageSize != null && pageSize > 0)
+            ? Math.min(pageSize, MAX_PAGE_SIZE)
+            : 50;
+
         // Free tier row limit
-        Integer rowLimit = isPro ? (pageSize != null ? pageSize : 50) : 10;
+        Integer rowLimit = isPro ? safePageSize : 10;
         Integer offset = isPro && pageNumber != null ? (pageNumber - 1) * rowLimit : 0;
 
         // Get SObjectType and check object-level read access
@@ -27,8 +35,13 @@ public with sharing class RelatedListController {
             return null;
         }
 
-        // Build list of fields that the user can read
+        // Validate parentFieldApiName exists on the object before using in query
         Map<String, Schema.SObjectField> fieldMap = childType.getDescribe().fields.getMap();
+        if (!fieldMap.containsKey(parentFieldApiName)) {
+            throw new AuraHandledException('Invalid parent field: ' + parentFieldApiName);
+        }
+
+        // Build list of fields that the user can read
         List<String> queryFields = new List<String>{ 'Id' };
 
         for (String field : fieldsString.split(',')) {
@@ -51,17 +64,23 @@ public with sharing class RelatedListController {
 
         String fieldList = String.join(queryFields, ', ');
 
-        // Build dynamic query
+        // Build dynamic query — objectApiName and parentFieldApiName are
+        // both validated against Schema above so safe to interpolate
         String query = 'SELECT ' + fieldList +
             ' FROM ' + objectApiName +
             ' WHERE ' + parentFieldApiName + ' = :recordId';
 
-        if (isPro && sortField != null && sortDirection != null) {
-            if (fieldMap.containsKey(sortField) && 
-                fieldMap.get(sortField).getDescribe().isAccessible() &&
-                (sortDirection == 'ASC' || sortDirection == 'DESC')) {
-                query += ' ORDER BY ' + sortField + ' ' + sortDirection;
-            }
+        if (sortField != null && sortDirection != null &&
+            fieldMap.containsKey(sortField) && 
+            fieldMap.get(sortField).getDescribe().isAccessible() &&
+            (sortDirection == 'ASC' || sortDirection == 'DESC')) {
+            query += ' ORDER BY ' + sortField + ' ' + sortDirection + ' NULLS LAST';
+        } else if (fieldMap.containsKey('Name') && fieldMap.get('Name').getDescribe().isAccessible()) {
+            // Safe default — keeps free and pro showing the same records
+            query += ' ORDER BY Name ASC NULLS LAST';
+        } else {
+            // Objects without Name (e.g. Task) fall back to CreatedDate
+            query += ' ORDER BY CreatedDate ASC NULLS LAST';
         }
 
         query += ' LIMIT ' + rowLimit;
@@ -92,23 +111,58 @@ public with sharing class RelatedListController {
     @AuraEnabled
     public static void saveRecords(List<SObject> records) {
         if (records == null || records.isEmpty()) return;
-    
-        // Verify user has edit access to the object
-        String objectName = records[0].getSObjectType().getDescribe().getName();
-        if (!Schema.getGlobalDescribe().get(objectName).getDescribe().isUpdateable()) {
+
+        Schema.SObjectType objectType = records[0].getSObjectType();
+        Schema.DescribeSObjectResult objectDescribe = objectType.getDescribe();
+
+        // Check object-level update access
+        if (!objectDescribe.isUpdateable()) {
             throw new AuraHandledException('You do not have permission to edit these records.');
         }
-        
+
+        // Check field-level security for every field being updated
+        Map<String, Schema.SObjectField> fieldMap = objectDescribe.fields.getMap();
+        for (SObject record : records) {
+            Map<String, Object> populatedFields = record.getPopulatedFieldsAsMap();
+            for (String fieldName : populatedFields.keySet()) {
+                if (fieldName == 'Id') continue;
+                Schema.SObjectField sField = fieldMap.get(fieldName);
+                if (sField == null || !sField.getDescribe().isUpdateable()) {
+                    throw new AuraHandledException(
+                        'You do not have permission to edit the field: ' + fieldName
+                    );
+                }
+            }
+        }
+
         update records;
+    }
+
+    @AuraEnabled
+    public static void deleteRecord(Id recordId) {
+        if (recordId == null) {
+            throw new AuraHandledException('Record ID is required.');
+        }
+
+        Schema.SObjectType objectType = recordId.getSObjectType();
+        if (objectType == null) {
+            throw new AuraHandledException('Could not determine object type for this record.');
+        }
+
+        if (!objectType.getDescribe().isDeletable()) {
+            throw new AuraHandledException('You do not have permission to delete this record.');
+        }
+
+        SObject record = objectType.newSObject(recordId);
+        delete record;
     }
 
     @AuraEnabled(cacheable=true)
     public static String getRelationshipName(String parentObjectApiName, String childObjectApiName, String parentFieldApiName) {
-        Schema.DescribeSObjectResult parentDescribe = Schema.getGlobalDescribe()
-            .get(parentObjectApiName)
-            .getDescribe();
-        
-        for (Schema.ChildRelationship rel : parentDescribe.getChildRelationships()) {
+        Schema.SObjectType parentType = Schema.getGlobalDescribe().get(parentObjectApiName);
+        if (parentType == null) return null;
+
+        for (Schema.ChildRelationship rel : parentType.getDescribe().getChildRelationships()) {
             if (rel.getChildSObject().getDescribe().getName() == childObjectApiName
                 && String.valueOf(rel.getField()) == parentFieldApiName) {
                 return rel.getRelationshipName();
@@ -125,14 +179,14 @@ public with sharing class RelatedListController {
         Map<String, List<Map<String, String>>> result = new Map<String, List<Map<String, String>>>();
         
         Schema.SObjectType objectType = Schema.getGlobalDescribe().get(objectApiName);
-        if (objectType == null) return result;
+        if (objectType == null || !objectType.getDescribe().isAccessible()) return result;
         
         Map<String, Schema.SObjectField> fieldMap = objectType.getDescribe().fields.getMap();
         
         for (String field : fieldsString.split(',')) {
             String trimmedField = field.trim();
             Schema.SObjectField sObjectField = fieldMap.get(trimmedField);
-            if (sObjectField == null) continue;
+            if (sObjectField == null || !sObjectField.getDescribe().isAccessible()) continue;
             
             Schema.DescribeFieldResult fieldDescribe = sObjectField.getDescribe();
             Schema.DisplayType fieldType = fieldDescribe.getType();
@@ -162,14 +216,14 @@ public with sharing class RelatedListController {
         Map<String, String> result = new Map<String, String>();
         
         Schema.SObjectType objectType = Schema.getGlobalDescribe().get(objectApiName);
-        if (objectType == null) return result;
+        if (objectType == null || !objectType.getDescribe().isAccessible()) return result;
         
         Map<String, Schema.SObjectField> fieldMap = objectType.getDescribe().fields.getMap();
         
         for (String field : fieldsString.split(',')) {
             String trimmedField = field.trim();
             Schema.SObjectField sObjectField = fieldMap.get(trimmedField);
-            if (sObjectField == null) continue;
+            if (sObjectField == null || !sObjectField.getDescribe().isAccessible()) continue;
             
             Schema.DisplayType fieldType = sObjectField.getDescribe().getType();
             result.put(trimmedField, String.valueOf(fieldType));
@@ -177,7 +231,7 @@ public with sharing class RelatedListController {
         return result;
     }
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled(cacheable=false)
     public static Map<String, Object> getFieldMetadata(
         String objectApiName,
         String fieldsString
@@ -186,7 +240,10 @@ public with sharing class RelatedListController {
         Map<String, Object> fields = new Map<String, Object>();
 
         Schema.SObjectType objectType = Schema.getGlobalDescribe().get(objectApiName);
-        if (objectType == null) return result;
+        if (objectType == null) {
+            result.put('isValid', false);
+            return result;
+        }
 
         Map<String, Schema.SObjectField> fieldMap = objectType.getDescribe().fields.getMap();
 
@@ -232,16 +289,30 @@ public with sharing class RelatedListController {
         }
 
         result.put('fields', fields);
-
+        result.put('isValid', true);
         Boolean isObjectCreatable = objectType.getDescribe().isCreateable();
+        Boolean isObjectDeletable = objectType.getDescribe().isDeletable();
         result.put('isObjectCreatable', isObjectCreatable);
+        result.put('isObjectDeletable', isObjectDeletable);
 
         return result;
     }
 
     @AuraEnabled(cacheable=true)
     public static List<SObject> searchRecords(String objectApiName, String searchTerm) {
-        String query = 'SELECT Id, Name FROM ' + objectApiName + 
+        // Validate objectApiName against schema before using in query
+        Schema.SObjectType objectType = Schema.getGlobalDescribe().get(objectApiName);
+        if (objectType == null || !objectType.getDescribe().isAccessible()) {
+            throw new AuraHandledException('Invalid or inaccessible object: ' + objectApiName);
+        }
+
+        // Verify the object has a Name field before querying it
+        Map<String, Schema.SObjectField> fieldMap = objectType.getDescribe().fields.getMap();
+        if (!fieldMap.containsKey('Name') || !fieldMap.get('Name').getDescribe().isAccessible()) {
+            throw new AuraHandledException('Object does not have an accessible Name field.');
+        }
+
+        String query = 'SELECT Id, Name FROM ' + objectApiName +
             ' WHERE Name LIKE \'%' + String.escapeSingleQuotes(searchTerm) + '%\' LIMIT 10';
         return Database.query(query);
     }
