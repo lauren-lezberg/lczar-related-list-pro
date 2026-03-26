@@ -2,24 +2,18 @@
     display: block;
 }
 
-/* .table-container c-custom-datatable {
-    margin-bottom: -16px;
-    display: block;
-} */
-
 .search-wrapper {
     width: 180px;
 }
 
 .search-wrapper lightning-input {
     --lwc-inputTextHeight: 28px;
-    --lwc-fontSize3: 12px;
 }
 
 .cta-footer {
-    border-top: 1px solid #d0d9f0;
-    padding: 6px 16px;
-    background-color: #f8f9ff;
+    border-top: var(--slds-g-sizing-border-1, 1px) solid var(--slds-g-color-accent-light-2, #d0d9f0);
+    padding: 6px var(--slds-g-spacing-4, 16px);
+    background-color: var(--slds-g-color-surface-1, #f8f9ff);
 }
 
 .cta-content {
@@ -37,21 +31,21 @@
 }
 
 .cta-divider {
-    width: 1px;
-    height: 16px;
-    background-color: #d0d9f0;
+    width: var(--slds-g-sizing-border-1, 1px);
+    height: var(--slds-g-sizing-5, 16px);
+    background-color: var(--slds-g-color-accent-light-2, #d0d9f0);
     flex-shrink: 0;
 }
 
 .cta-message {
-    color: #706e6b;
+    color: var(--slds-g-color-on-surface-1, #706e6b);
     font-size: 11px;
     line-height: 1.4;
 }
 
 .upgrade-link {
-    color: #0066FF;
-    font-weight: 600;
+    color: var(--slds-g-color-accent-1, #0066ff);
+    font-weight: var(--slds-g-font-weight-6, 600);
     text-decoration: none;
 }
 

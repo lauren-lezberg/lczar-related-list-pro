@@ -6,9 +6,9 @@
 .dropdown {
     position: absolute;
     z-index: 9999;
-    background: white;
-    border: 1px solid #dddbda;
-    border-radius: 4px;
+    background: var(--slds-g-color-surface-1, white);
+    border: var(--slds-g-sizing-border-1, 1px) solid var(--slds-g-color-border-1, #dddbda);
+    border-radius: var(--slds-g-radius-border-1, 4px);
     width: 100%;
     max-height: 200px;
     overflow-y: auto;
@@ -16,10 +16,10 @@
 }
 
 .slds-listbox__item {
-    padding: 8px 12px;
+    padding: var(--slds-g-spacing-2, 8px) var(--slds-g-spacing-3, 12px);
     cursor: pointer;
 }
 
 .slds-listbox__item:hover {
-    background-color: #f3f3f3;
+    background-color: var(--slds-g-color-surface-2, #f3f3f3);
 }

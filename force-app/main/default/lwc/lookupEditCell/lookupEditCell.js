@@ -9,7 +9,7 @@ export default class LookupEditCell extends LightningElement {
     @track showDropdown = false;
     @track isSearching = false;
     _value;
-    _searchTimeout;
+    _lastSearchTerm = '';
 
     @api
     get editedValue() {
@@ -19,7 +19,6 @@ export default class LookupEditCell extends LightningElement {
         this._value = val;
     }
 
-    // This is what the datatable reads on save
     @api
     get value() {
         return this._value;
@@ -56,16 +55,19 @@ export default class LookupEditCell extends LightningElement {
         const searchTerm = event.target.value;
         this.displayValue = searchTerm;
 
-        if (this._searchTimeout) clearTimeout(this._searchTimeout);
-
         if (searchTerm.length < 2) {
             this.showDropdown = false;
+            this._lastSearchTerm = '';
             return;
         }
 
-        this._searchTimeout = setTimeout(() => {
-            this.handleSearch(searchTerm);
-        }, 300);
+        // Only search if the term has actually changed
+        if (searchTerm === this._lastSearchTerm) {
+            return;
+        }
+
+        this._lastSearchTerm = searchTerm;
+        this.handleSearch(searchTerm);
     }
 
     handleSearch(searchTerm) {
@@ -77,7 +79,10 @@ export default class LookupEditCell extends LightningElement {
             searchTerm: searchTerm
         })
         .then(results => {
-            this.searchResults = results;
+            // Only update if the search term is still current
+            if (searchTerm === this._lastSearchTerm) {
+                this.searchResults = results;
+            }
             this.isSearching = false;
         })
         .catch(() => {
@@ -89,16 +94,16 @@ export default class LookupEditCell extends LightningElement {
     handleSelect(event) {
         const selectedId = event.currentTarget.dataset.id;
         const selectedName = event.currentTarget.dataset.name;
-        
+
         this._value = selectedId;
         this.displayValue = selectedName;
         this.showDropdown = false;
+        this._lastSearchTerm = '';
 
-        // Dispatch with both ID and name
         this.dispatchEvent(new CustomEvent('lookupselect', {
             bubbles: true,
             composed: true,
-            detail: { 
+            detail: {
                 fieldName: this.typeAttributes.fieldName,
                 value: selectedId,
                 displayName: selectedName,
@@ -106,7 +111,6 @@ export default class LookupEditCell extends LightningElement {
             }
         }));
 
-        // Also dispatch change for datatable draft values
         this.dispatchEvent(new CustomEvent('change', {
             bubbles: true,
             composed: true,

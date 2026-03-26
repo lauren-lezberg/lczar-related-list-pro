@@ -451,6 +451,10 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
         return this.displayRecords.length === 1 ? '' : 's';
     }
 
+    get hasAnyRecords() {
+        return this.records.length > 0;
+    }
+
     // ── Cell change / lookup ─────────────────────────────────────────────────
 
     handleCellChange(event) {
@@ -464,7 +468,7 @@ export default class RelatedListPro extends NavigationMixin(LightningElement) {
     }
 
     handleLookupSelect(event) {
-        const { fieldName, value, displayName, rowId } = event.detail;
+        const { fieldName, displayName, rowId } = event.detail;
         const key = `${rowId}_${fieldName}`;
         this.lookupDisplayNames = { ...this.lookupDisplayNames, [key]: displayName };
     }
