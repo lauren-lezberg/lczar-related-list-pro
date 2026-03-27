@@ -26,22 +26,22 @@ private class RelatedListControllerTest {
     // ----------------------------
 
     @IsTest
-    static void testIsValidProLicense_validKey() {
-        // isProOverride bypasses license check in other tests — test the method directly
-        System.assertEquals(false, RelatedListController.isValidProLicense(),
-            'Should return false when no Pro metadata record exists');
+    static void testLicenseValidNoRecord() {
+        User testUser = createTestUser();
+        System.runAs(testUser) {
+            System.assertEquals(false, RelatedListController.isValidProLicense(),
+                'Should return false when no Pro metadata record exists');
+        }
     }
 
     @IsTest
-    static void testIsValidProLicense_invalidPrefix() {
+    static void testLicenseValidNoKey() {
         User testUser = createTestUser();
         System.runAs(testUser) {
-            // No metadata record = not pro, even with override off
             RelatedListController.isProOverride = false;
 
             Account acc = [SELECT Id FROM Account LIMIT 1];
 
-            // Without override, component should be in free mode
             Map<String, Object> result = RelatedListController.getRelatedRecords(
                 acc.Id, 'Opportunity', 'AccountId', 'Name', 10, 1, null, null
             );
@@ -474,7 +474,7 @@ private class RelatedListControllerTest {
     // ----------------------------
 
     private static User createTestUser() {
-        Profile p = [SELECT Id FROM Profile WHERE Name = 'Standard User' LIMIT 1];
+        Profile p = [SELECT Id FROM Profile WHERE Name = 'System Administrator' LIMIT 1];
         User u = new User(
             Alias = 'rlptest',
             Email = 'rlptest@example.com',
@@ -488,5 +488,37 @@ private class RelatedListControllerTest {
         );
         insert u;
         return u;
+    }
+
+    @IsTest
+    static void testGetPicklistValues() {
+        User testUser = createTestUser();
+        System.runAs(testUser) {
+            Map<String, List<Map<String, String>>> result = RelatedListController.getPicklistValues(
+                'Opportunity',
+                'StageName,Type'
+            );
+
+            System.assertNotEquals(null, result, 'Result should not be null');
+            System.assert(result.containsKey('StageName'), 'Should contain StageName picklist values');
+            System.assert(result.get('StageName').size() > 0, 'StageName should have values');
+        }
+    }
+
+    @IsTest
+    static void testGetFieldTypes() {
+        User testUser = createTestUser();
+        System.runAs(testUser) {
+            Map<String, String> result = RelatedListController.getFieldTypes(
+                'Opportunity',
+                'Name,Amount,StageName,CloseDate'
+            );
+
+            System.assertNotEquals(null, result, 'Result should not be null');
+            System.assertEquals('STRING', result.get('Name'));
+            System.assertEquals('CURRENCY', result.get('Amount'));
+            System.assertEquals('PICKLIST', result.get('StageName'));
+            System.assertEquals('DATE', result.get('CloseDate'));
+        }
     }
 }

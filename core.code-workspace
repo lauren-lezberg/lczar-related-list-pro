@@ -1,0 +1,19 @@
+{
+  "folders": [
+    {
+      "path": "/Users/lauren.lezberg/lczar-related-list"
+    }
+  ],
+  "settings": {
+    "eslint.workingDirectories": [
+      "/Users/lauren.lezberg/lczar-related-list"
+    ],
+    "eslint.validate": [
+      "javascript",
+      "typescript"
+    ],
+    "eslint.options": {
+      "overrideConfigFile": "/Users/lauren.lezberg/lczar-related-list/.eslintrc.json"
+    }
+  }
+}
