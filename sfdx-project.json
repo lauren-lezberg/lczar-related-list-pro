@@ -1,10 +1,10 @@
 {
   "packageDirectories": [
     {
-      "versionName": "ver 0.1",
-      "versionNumber": "0.1.0.NEXT",
+      "versionName": "Version 1.0",
+      "versionNumber": "1.0.0.NEXT",
       "path": "force-app",
-      "default": false,
+      "default": true,
       "package": "RelatedListPro",
       "versionDescription": ""
     }
@@ -14,6 +14,7 @@
   "sfdcLoginUrl": "https://login.salesforce.com",
   "sourceApiVersion": "66.0",
   "packageAliases": {
-    "RelatedListPro": "0HogK0000001AVBSA2"
+    "RelatedListPro": "0HogK0000001AVBSA2",
+    "RelatedListPro@1.0.0-1": "04tgK000000B1QbQAK"
   }
 }
