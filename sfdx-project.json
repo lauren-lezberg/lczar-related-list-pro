@@ -1,12 +1,19 @@
 {
   "packageDirectories": [
     {
+      "versionName": "ver 0.1",
+      "versionNumber": "0.1.0.NEXT",
       "path": "force-app",
-      "default": true
+      "default": false,
+      "package": "RelatedListPro",
+      "versionDescription": ""
     }
   ],
   "name": "lczar-related-list",
-  "namespace": "",
+  "namespace": "lczarlabs",
   "sfdcLoginUrl": "https://login.salesforce.com",
-  "sourceApiVersion": "66.0"
+  "sourceApiVersion": "66.0",
+  "packageAliases": {
+    "RelatedListPro": "0HogK0000001AVBSA2"
+  }
 }
